@@ -64,6 +64,44 @@ def ingest_results(db) -> int:
     return updated
 
 
+def _parse_kickoff(value: str | None):
+    """Convertit une date ISO de l'API en datetime (ou None)."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def sync_fixtures(db) -> int:
+    """Crée/met à jour TOUS les matchs du tournoi en base (même à venir).
+    C'est ce qui peuple la liste des matchs visible dans l'app.
+    """
+    fixtures = fb_conn.fetch_fixtures()  # sans date = tout le tournoi
+    synced = 0
+    for fx in fixtures:
+        home = _get_or_create_team(db, fx["home"])
+        away = _get_or_create_team(db, fx["away"])
+        m = db.scalar(select(MatchModel).where(
+            MatchModel.external_id == fx["external_id"]))
+        if not m:
+            m = MatchModel(external_id=fx["external_id"],
+                           home_team_id=home.id, away_team_id=away.id,
+                           neutral=True)
+            db.add(m)
+        m.home_team_id = home.id
+        m.away_team_id = away.id
+        m.kickoff = _parse_kickoff(fx.get("kickoff"))
+        m.status = fx["status"]
+        if fx.get("home_goals") is not None:
+            m.home_goals = fx["home_goals"]
+            m.away_goals = fx["away_goals"]
+        synced += 1
+    db.commit()
+    return synced
+
+
 def refresh_sentiment(db) -> None:
     """Étape 3b : met à jour le sentiment de chaque équipe."""
     for team in db.scalars(select(TeamModel)).all():
@@ -82,7 +120,6 @@ def repredict_upcoming(db) -> int:
     for m in upcoming:
         if not m.home or not m.away:
             continue
-
         def to_engine(tm: TeamModel) -> Team:
             bonus = sent_conn.sentiment_to_form_bonus(tm.sentiment_score or 0)
             form = list(tm.recent_form or [])
@@ -106,10 +143,12 @@ def run():
     db = SessionLocal()
     try:
         n_res = ingest_results(db)
+        n_sync = sync_fixtures(db)
         refresh_sentiment(db)
         n_pred = repredict_upcoming(db)
         print(f"[{datetime.utcnow():%Y-%m-%d %H:%M}] "
               f"MAJ terminée — {n_res} résultats ingérés, "
+              f"{n_sync} matchs synchronisés, "
               f"{n_pred} pronostics recalculés.")
     finally:
         db.close()
