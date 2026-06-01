@@ -22,22 +22,3 @@ services:
         sync: false
       - key: NEWS_API_KEY
         sync: false
-
-  - type: cron
-    name: oracle-daily-update
-    runtime: python
-    plan: free
-    schedule: "0 6 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.jobs.daily_update
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: oracle-db
-          property: connectionString
-      - key: ODDS_API_KEY
-        sync: false
-      - key: FOOTBALL_API_KEY
-        sync: false
-      - key: NEWS_API_KEY
-        sync: false
