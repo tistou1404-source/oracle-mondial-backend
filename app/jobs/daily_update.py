@@ -8,17 +8,19 @@ from ..db.models import TeamModel, MatchModel, PredictionLog
 from ..connectors import odds as odds_conn
 from ..connectors import football as fb_conn
 from ..connectors import sentiment as sent_conn
+
 from ..core.engine import (Team, elo_expected, update_elo, predict_match)
+from ..core.team_ratings import starting_profile
 
 
 def _get_or_create_team(db, name: str) -> TeamModel:
     t = db.scalar(select(TeamModel).where(TeamModel.name == name))
     if not t:
-        t = TeamModel(name=name)
+        elo, attack, defense = starting_profile(name)
+        t = TeamModel(name=name, elo=elo, attack=attack, defense=defense)
         db.add(t)
         db.flush()
     return t
-
 
 def _outcome(home_goals: int, away_goals: int) -> tuple[float, float, str]:
     if home_goals > away_goals:
