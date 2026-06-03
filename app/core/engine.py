@@ -81,6 +81,30 @@ def detect_value_bets(probs, odds: dict[str, float], margin: float = 0.03):
     return out
 
 
+def market_probabilities(odds: dict[str, float]):
+    """Convertit les cotes en probabilités du marché, marge du bookmaker retirée."""
+    keys = ("win_a", "draw", "win_b")
+    if not odds or any(odds.get(k, 0) <= 1 for k in keys):
+        return None
+    raw = {k: 1.0 / odds[k] for k in keys}
+    total = sum(raw.values())
+    if total <= 0:
+        return None
+    return {k: raw[k] / total for k in keys}
+
+
+def consensus_probabilities(model_probs: dict, odds, model_weight: float = 0.5):
+    """Combine les probas du modèle et du marché (moyenne pondérée)."""
+    market = market_probabilities(odds) if odds else None
+    if not market:
+        return None
+    w = max(0.0, min(1.0, model_weight))
+    keys = ("win_a", "draw", "win_b")
+    blended = {k: w * model_probs[k] + (1 - w) * market[k] for k in keys}
+    total = sum(blended.values()) or 1.0
+    return {k: round(blended[k] / total, 3) for k in keys}
+
+
 def predict_match(a: Team, b: Team, odds: Optional[dict] = None, neutral: bool = True) -> dict:
     home = 0.0 if neutral else 65.0
     p_a = elo_expected(a.elo, b.elo, home)
@@ -95,4 +119,10 @@ def predict_match(a: Team, b: Team, odds: Optional[dict] = None, neutral: bool =
     }
     if odds:
         res["value_bets"] = detect_value_bets(probs, odds)
+        market = market_probabilities(odds)
+        if market:
+            res["proba_marche"] = {k: round(v, 3) for k, v in market.items()}
+        cons = consensus_probabilities(probs, odds)
+        if cons:
+            res["consensus"] = cons
     return res
