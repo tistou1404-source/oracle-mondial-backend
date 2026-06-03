@@ -111,10 +111,27 @@ def refresh_sentiment(db) -> None:
     db.commit()
 
 
+def _team_key(name: str) -> str:
+    """Normalise un nom d'équipe pour l'associer de façon robuste
+    (minuscules, sans accents/ponctuation/espaces). 'South Africa' -> 'southafrica'."""
+    import unicodedata
+    if not name:
+        return ""
+    n = unicodedata.normalize("NFKD", name)
+    n = "".join(c for c in n if not unicodedata.combining(c))
+    return "".join(c.lower() for c in n if c.isalnum())
+
+
+def _match_key(home: str, away: str) -> str:
+    return _team_key(home) + "|" + _team_key(away)
+
+
 def repredict_upcoming(db) -> int:
     """Étapes 3a & 4 : rafraîchit cotes et recalcule les pronostics à venir."""
     odds_list = odds_conn.fetch_odds()
-    odds_by_match = {o["external_id"]: o for o in odds_list}
+    # Association par NOMS d'équipes (les identifiants diffèrent entre sources).
+    odds_by_teams = {_match_key(o.get("home"), o.get("away")): o
+                     for o in odds_list}
 
     upcoming = db.scalars(select(MatchModel).where(
         MatchModel.status == "scheduled")).all()
@@ -122,6 +139,7 @@ def repredict_upcoming(db) -> int:
     for m in upcoming:
         if not m.home or not m.away:
             continue
+        # injecte le bonus de sentiment dans la forme effective
         def to_engine(tm: TeamModel) -> Team:
             bonus = sent_conn.sentiment_to_form_bonus(tm.sentiment_score or 0)
             form = list(tm.recent_form or [])
@@ -129,7 +147,7 @@ def repredict_upcoming(db) -> int:
                 form[-1] = min(1.0, max(0.0, form[-1] + bonus))
             return Team(tm.name, tm.elo, tm.attack, tm.defense, form)
 
-        o = odds_by_match.get(m.external_id)
+        o = odds_by_teams.get(_match_key(m.home.name, m.away.name))
         if o:
             m.odds = o["odds"]
         m.prediction = predict_match(
