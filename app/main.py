@@ -85,11 +85,15 @@ def match_prediction(match_id: int, db: Session = Depends(get_db)):
     return m.prediction
 
 
-@app.post("/admin/run-update")
-def trigger_update():
-    """Déclenche manuellement la mise à jour quotidienne (utile pour tester)."""
-    run_daily()
-    return {"status": "update terminée", "time": datetime.utcnow().isoformat()}
+@app.post("/admin/reset")
+def admin_reset(db: Session = Depends(get_db)):
+    """Vide équipes, matchs et logs. À lancer une fois après avoir changé les
+    forces de départ, puis relancer /admin/run-update pour tout recréer."""
+    db.query(PredictionLog).delete()
+    db.query(MatchModel).delete()
+    db.query(TeamModel).delete()
+    db.commit()
+    return {"status": "base vidée", "time": datetime.utcnow().isoformat()}
 
 
 @app.get("/stats/model-performance")
