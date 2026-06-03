@@ -1,18 +1,31 @@
-"""connectors/football.py — Données sportives : matchs, résultats, effectifs.
+"""connectors/football.py — Données du Mondial 2026 via openfootball (gratuit).
 
-Utilise API-Football (api-football.com via RapidAPI ou direct).
-Clé dans FOOTBALL_API_KEY. Mode mock si absente.
+Source : https://github.com/openfootball/worldcup.json
+Données du domaine public, AUCUNE clé API requise, calendrier complet
+des matchs (phase de groupes + phases finales).
 """
 import os
 
-FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY", "")
-BASE = "https://v3.football.api-sports.io"
-WC_LEAGUE_ID = 1
-SEASON = 2026
+WORLDCUP_URL = ("https://raw.githubusercontent.com/openfootball/"
+                "worldcup.json/master/2026/worldcup.json")
+
+FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY", "")  # gardé pour compatibilité
 
 
-def _headers():
-    return {"x-apisports-key": FOOTBALL_API_KEY}
+def _slug(s: str) -> str:
+    return "".join(c.lower() if c.isalnum() else "-" for c in s).strip("-")
+
+
+def _is_real_team(name: str) -> bool:
+    """Écarte les placeholders (ex: 'UEFA Path D winner', '2A', 'W74')."""
+    if not name:
+        return False
+    low = name.lower()
+    if any(m in low for m in ("winner", "path", "/", "ic ")):
+        return False
+    if len(name) <= 4 and any(ch.isdigit() for ch in name):
+        return False
+    return True
 
 
 def _mock_fixtures() -> list[dict]:
@@ -24,42 +37,50 @@ def _mock_fixtures() -> list[dict]:
     }]
 
 
+def _parse_score(match: dict):
+    score = match.get("score") or {}
+    ft = score.get("ft")
+    if isinstance(ft, list) and len(ft) == 2:
+        return ft[0], ft[1]
+    return None, None
+
+
 def fetch_fixtures(date: str | None = None) -> list[dict]:
-    """Matchs du Mondial (optionnellement filtrés par date YYYY-MM-DD)."""
-    if not FOOTBALL_API_KEY:
-        return _mock_fixtures()
+    """Matchs du Mondial 2026 depuis openfootball.
+    - sans date : tout le calendrier (vraies équipes connues)
+    - avec date (YYYY-MM-DD) : matchs de ce jour
+    """
     import httpx
-    params = {"league": WC_LEAGUE_ID, "season": SEASON}
-    if date:
-        params["date"] = date
-    with httpx.Client(timeout=20) as c:
-        r = c.get(f"{BASE}/fixtures", headers=_headers(), params=params)
-        r.raise_for_status()
-        data = r.json().get("response", [])
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as c:
+            r = c.get(WORLDCUP_URL)
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        return _mock_fixtures()
+
     out = []
-    for f in data:
-        fx, goals, teams = f["fixture"], f["goals"], f["teams"]
+    for m in data.get("matches", []):
+        home, away = m.get("team1", ""), m.get("team2", "")
+        if not _is_real_team(home) or not _is_real_team(away):
+            continue
+        m_date = m.get("date")
+        if date and m_date != date:
+            continue
+        hg, ag = _parse_score(m)
+        status = "finished" if hg is not None else "scheduled"
+        time_part = (m.get("time") or "00:00").split(" ")[0]
+        kickoff = f"{m_date}T{time_part}:00Z" if m_date else None
         out.append({
-            "external_id": str(fx["id"]),
-            "home": teams["home"]["name"], "away": teams["away"]["name"],
-            "kickoff": fx["date"],
-            "status": "finished" if fx["status"]["short"] == "FT" else "scheduled",
-            "home_goals": goals["home"], "away_goals": goals["away"],
+            "external_id": f"wc2026-{m_date}-{_slug(home)}-{_slug(away)}",
+            "home": home, "away": away,
+            "kickoff": kickoff,
+            "status": status,
+            "home_goals": hg, "away_goals": ag,
         })
     return out
 
 
 def fetch_squad(team_id: int) -> list[dict]:
-    """Effectif d'une équipe."""
-    if not FOOTBALL_API_KEY:
-        return []
-    import httpx
-    with httpx.Client(timeout=20) as c:
-        r = c.get(f"{BASE}/players/squads", headers=_headers(),
-                  params={"team": team_id})
-        r.raise_for_status()
-        resp = r.json().get("response", [])
-    if not resp:
-        return []
-    return [{"name": p["name"], "position": p["position"], "age": p["age"]}
-            for p in resp[0].get("players", [])]
+    """Effectifs non fournis par openfootball (le moteur n'en a pas besoin)."""
+    return []
