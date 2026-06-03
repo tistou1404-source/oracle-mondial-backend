@@ -83,7 +83,11 @@ def match_prediction(match_id: int, db: Session = Depends(get_db)):
     if not m.prediction:
         raise HTTPException(404, "Pas encore de pronostic calculé")
     return m.prediction
-
+@app.post("/admin/run-update")
+def trigger_update():
+    """Déclenche manuellement la mise à jour quotidienne (utile pour tester)."""
+    run_daily()
+    return {"status": "update terminée", "time": datetime.utcnow().isoformat()}
 
 @app.post("/admin/reset")
 def admin_reset(db: Session = Depends(get_db)):
