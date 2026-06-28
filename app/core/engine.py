@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-
+EXTRA_TIME_FACTOR = 1.25  # buts attendus sur 120 min vs 90 (prolongations prudentes)
 @dataclass
 class Team:
     name: str
@@ -104,11 +104,16 @@ def consensus_probabilities(model_probs: dict, odds, model_weight: float = 0.5):
     total = sum(blended.values()) or 1.0
     return {k: round(blended[k] / total, 3) for k in keys}
 
-
-def predict_match(a: Team, b: Team, odds: Optional[dict] = None, neutral: bool = True) -> dict:
+def predict_match(a: Team, b: Team, odds: Optional[dict] = None,
+                  neutral: bool = True, phase_finale: bool = False) -> dict:
     home = 0.0 if neutral else 65.0
     p_a = elo_expected(a.elo, b.elo, home)
     lam_a, lam_b = expected_goals(a, b, p_a)
+    # En phase à élimination directe, on pronostique le résultat aux 120 minutes :
+    # plus de temps de jeu => plus de buts attendus => moins de nuls "secs".
+    if phase_finale:
+        lam_a *= EXTRA_TIME_FACTOR
+        lam_b *= EXTRA_TIME_FACTOR
     matrix = score_matrix(lam_a, lam_b)
     probs = outcome_probabilities(matrix)
     res = {
@@ -116,6 +121,7 @@ def predict_match(a: Team, b: Team, odds: Optional[dict] = None, neutral: bool =
         "buts_attendus": {a.name: round(lam_a, 2), b.name: round(lam_b, 2)},
         "probabilites": {k: round(v, 3) for k, v in probs.items()},
         "scores_probables": top_scores(matrix, 5),
+        "phase_finale": phase_finale,
     }
     if odds:
         res["value_bets"] = detect_value_bets(probs, odds)
