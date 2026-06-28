@@ -1,7 +1,7 @@
 """jobs/daily_update.py — Mise à jour quotidienne automatique."""
 from __future__ import annotations
 from datetime import datetime, timedelta
-
+KNOCKOUT_START = datetime(2026, 6, 28)  # début des phases à élimination directe (16es)
 from sqlalchemy import select
 from ..db.session import SessionLocal, init_db
 from ..db.models import TeamModel, MatchModel, PredictionLog
@@ -147,16 +147,18 @@ def repredict_upcoming(db) -> int:
                 form[-1] = min(1.0, max(0.0, form[-1] + bonus))
             return Team(tm.name, tm.elo, tm.attack, tm.defense, form)
 
+        # Détection de la phase finale par la date (robuste au fuseau horaire).
+        phase_finale = bool(m.kickoff and m.kickoff.date() >= KNOCKOUT_START.date())
+
         o = odds_by_teams.get(_match_key(m.home.name, m.away.name))
         if o:
             m.odds = o["odds"]
         m.prediction = predict_match(
             to_engine(m.home), to_engine(m.away),
-            odds=m.odds, neutral=m.neutral)
+            odds=m.odds, neutral=m.neutral, phase_finale=phase_finale)
         count += 1
     db.commit()
     return count
-
 
 def run():
     init_db()
