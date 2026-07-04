@@ -98,7 +98,42 @@ def admin_reset(db: Session = Depends(get_db)):
     db.query(TeamModel).delete()
     db.commit()
     return {"status": "base vidée", "time": datetime.utcnow().isoformat()}
+class AddMatchIn(BaseModel):
+    home: str
+    away: str
+    date: str            # "YYYY-MM-DD" (ex "2026-07-04")
+    time: str = "20:00"  # heure locale approximative, HH:MM
 
+
+@app.post("/admin/add-match")
+def admin_add_match(body: AddMatchIn, db: Session = Depends(get_db)):
+    """Ajoute manuellement un match (phases finales non encore dans openfootball).
+    Réutilise les Elo actuels, calcule pronostic (mode 120 min auto) + cotes + consensus."""
+    from .jobs.daily_update import _get_or_create_team, repredict_upcoming, _parse_kickoff
+
+    home = _get_or_create_team(db, body.home.strip())
+    away = _get_or_create_team(db, body.away.strip())
+
+    external_id = f"manual-{body.date}-{home.name}-{away.name}".replace(" ", "-").lower()
+    existing = db.scalar(select(MatchModel).where(
+        MatchModel.external_id == external_id))
+    if existing:
+        repredict_upcoming(db)
+        return {"status": "match déjà présent, pronostic rafraîchi",
+                "external_id": external_id}
+
+    kickoff = _parse_kickoff(f"{body.date}T{body.time}:00Z")
+    m = MatchModel(external_id=external_id,
+                   home_team_id=home.id, away_team_id=away.id,
+                   kickoff=kickoff, status="scheduled", neutral=True)
+    db.add(m)
+    db.commit()
+
+    n = repredict_upcoming(db)
+    return {"status": "match ajouté et pronostic calculé",
+            "match": f"{home.name} vs {away.name}",
+            "external_id": external_id,
+            "pronostics_recalcules": n}
 
 @app.get("/stats/model-performance")
 def model_perf(db: Session = Depends(get_db)):
